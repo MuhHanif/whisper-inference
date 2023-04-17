@@ -1,13 +1,14 @@
 import nsq
 from typing import List, Dict
 
-def read_nsq(queue_topic: str, lookupd_http_addresses: List[str]) -> Dict[str, List[str]]:
+
+def read_nsq(queue_topic: str, nsqd_tcp_addresses: List[str]) -> Dict[str, List[str]]:
     """
     Reads messages from an NSQ queue and returns them as a dictionary.
 
     Args:
         queue_topic: The name of the NSQ topic to read from.
-        lookupd_http_addresses: A list of one or more lookupd HTTP addresses to discover NSQD producers.
+        nsqd_tcp_addresses: A list of one or more nsqd TCP addresses to connect to NSQD producers.
 
     Returns:
         A dictionary with a single key 'messages' containing a list of messages received.
@@ -21,10 +22,13 @@ def read_nsq(queue_topic: str, lookupd_http_addresses: List[str]) -> Dict[str, L
 
     r = nsq.Reader(
         message_handler=handler,
-        lookupd_http_addresses=lookupd_http_addresses,
+        nsqd_tcp_addresses=nsqd_tcp_addresses,
         topic=queue_topic,
-        channel='my_channel'
+        channel="my_channel",
     )
     nsq.run()
 
-    return {'messages': messages}
+    return {"messages": messages}
+
+
+print()
