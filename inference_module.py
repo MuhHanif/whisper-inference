@@ -98,7 +98,7 @@ def whisper_inference(model, audio_file: Union[str, bytes]) -> Tuple[List[str], 
     stop_conversion_time = time.time()  
 
     # create a back and forth conversation order
-    combined_transcription = pd.concat([result[0][0],result[0][1]])
+    combined_transcription = pd.concat(transcriptions)
     combined_transcription = combined_transcription.sort_values(by=['start'])
     combined_transcription = combined_transcription.reset_index(drop=True)
     
