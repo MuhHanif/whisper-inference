@@ -99,9 +99,9 @@ def whisper_inference(model, audio_file: Union[str, bytes]) -> Tuple[List[str], 
 
     # create a back and forth conversation order
     combined_transcription = pd.concat([result[0][0],result[0][1]])
-    combined_transcription = combined_transcription.reset_index(drop=True)
     combined_transcription = combined_transcription.sort_values(by=['start'])
-
+    combined_transcription = combined_transcription.reset_index(drop=True)
+    
     stop_processing_time = time.time() 
     return (
         transcriptions, 
@@ -132,9 +132,7 @@ def create_srt(df: pd.DataFrame, start_col: str = "start_speech",
         srt_content += f"{i+1}\n"
         
         # Write the time range
-        print(row[start_col])
         start_time = pd.to_datetime(row[start_col], unit='s').strftime('%H:%M:%S,%f')[:-3]
-        print(start_time)
         end_time = pd.to_datetime(row[end_col], unit='s').strftime('%H:%M:%S,%f')[:-3]
         srt_content += f"{start_time} --> {end_time}\n"
         
