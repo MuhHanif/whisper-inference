@@ -173,3 +173,32 @@ def create_vtt(df: pd.DataFrame, start_col: str = "start_speech",
         vtt_content += "\n"
     
     return vtt_content.strip()
+
+def create_custom_vtt(df: pd.DataFrame, start_col: str = "start_speech", 
+               end_col: str = "end_speech", subtitle_col: str = "subtitles") -> str:
+    """
+    Create a custom VTT file from a pandas dataframe with columns specified by the `start_col`, `end_col`, and `subtitle_col` 
+    parameters, and return the file contents as a string.
+    
+    Parameters:
+        df (pd.DataFrame): The pandas dataframe containing the subtitles data.
+        start_col (str): The name of the dataframe column containing the start time of the subtitles. Default is "start_speech".
+        end_col (str): The name of the dataframe column containing the end time of the subtitles. Default is "end_speech".
+        subtitle_col (str): The name of the dataframe column containing the subtitle text. Default is "subtitles".
+    
+    Returns:
+        str: The custom VTT file contents as a string.
+    """
+    
+    vtt_content = ''
+    for i, row in df.iterrows():
+        
+        # Write the time range
+        start_time = pd.to_datetime(row[start_col], unit='s').strftime('%H:%M:%S,%f')[:-3]
+        end_time = pd.to_datetime(row[end_col], unit='s').strftime('%H:%M:%S,%f')[:-3]
+        vtt_content += f"{start_time} --> {end_time} "
+        
+        # Write the subtitle text
+        vtt_content += f"{row[subtitle_col]}\n"
+    
+    return vtt_content.strip()
