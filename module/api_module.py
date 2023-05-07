@@ -7,7 +7,7 @@ import json
 import time
 from .inference_module import *
 
-with open('config_file.json') as f:
+with open("config_file.json") as f:
     config = json.load(f)
 
 app = FastAPI()
@@ -16,6 +16,7 @@ app = FastAPI()
 
 # pin the model into memory
 model = load_model(config["models"])
+
 
 @app.get("/testing/{name}")
 async def test_connection(name: str):
@@ -50,14 +51,15 @@ async def upload_audio_file(file: UploadFile = File(...)) -> dict:
     file_path = os.path.join(upload_folder, file.filename)
     with open(file_path, "wb") as f:
         f.write(await file.read())
-    
+
     output = whisper_to_vtt(model, file_path, output_dir="/kaggle/working/test")
-    
-    # im disabling using queue for now   
+
+    # im disabling using queue for now
     # contents: bytes = await file.read()
     # audio_queue.put(contents)
 
     return output
+
 
 @app.post("/upload/audio_test_upload/")
 async def upload_audio_file_test_upload(file: UploadFile = File(...)) -> dict:
@@ -87,13 +89,13 @@ async def upload_audio_file_test_upload(file: UploadFile = File(...)) -> dict:
     file_path = os.path.join(upload_folder, file.filename)
     with open(file_path, "wb") as f:
         f.write(await file.read())
-    
-    
-    # im disabling using queue for now   
+
+    # im disabling using queue for now
     # contents: bytes = await file.read()
     # audio_queue.put(contents)
 
     return {"message": "working as intended"}
+
 
 @app.post("/upload/audio_test_preprocessing/")
 async def upload_audio_file_test_preprocessing(file: UploadFile = File(...)) -> dict:
@@ -123,11 +125,11 @@ async def upload_audio_file_test_preprocessing(file: UploadFile = File(...)) -> 
     file_path = os.path.join(upload_folder, file.filename)
     with open(file_path, "wb") as f:
         f.write(await file.read())
-    
+
     tic = time.time()
     audio = split_stereo_audio_ffmpeg(file_path)
     tac = time.time()
-    # im disabling using queue for now   
+    # im disabling using queue for now
     # contents: bytes = await file.read()
     # audio_queue.put(contents)
 
