@@ -22,7 +22,7 @@ def consumer_queue(whisper_config: str, json_config: str) -> None:
         whisper_config = json.load(whisper_conf)
 
     # pin the model into memory
-    model = load_model(whisper_config["models"])
+    model = load_model(whisper_config["models"], device=whisper_config["cuda_device"])
 
     # Access the CLODUAMQP_URL environment variable and parse it (fallback to localhost)
     url = os.environ.get(
@@ -53,15 +53,17 @@ def consumer_queue(whisper_config: str, json_config: str) -> None:
         os.system(f"wget {payload['file_uri']} -P {upload_folder}")
 
         # put audio processing here
-        file_path = os.path.join(upload_folder, file.filename)
+        file_path = os.path.join(upload_folder, payload["file_name"])
         output = whisper_to_vtt(model, file_path, output_dir="/kaggle/working/test")
 
-        # response message to another queue
+        ch.basic_ack(delivery_tag=method.delivery_tag)
+
+        # ============ response message to another queue ============ #
         connection_response = pika.BlockingConnection(params)
         channel_response = connection_response.channel()
 
         # Declare a queue
-        channel_response.queue_declare(queue="hello_response")
+        channel_response.queue_declare(queue=config["response_queue"])
 
         # output from STT (insert dummy output for now)
         output = "done"
@@ -86,7 +88,7 @@ def consumer_queue(whisper_config: str, json_config: str) -> None:
     channel.basic_consume(
         queue=config["queue"],
         on_message_callback=callback,
-        auto_ack=True,
+        auto_ack=False,
     )
     print("Waiting for messages. To exit, press CTRL+C")
     channel.start_consuming()

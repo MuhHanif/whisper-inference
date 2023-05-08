@@ -1,4 +1,5 @@
 {
     "models": "medium",
+    "cuda_device": "cuda:3",
     "enable_tunnel": false
 }
