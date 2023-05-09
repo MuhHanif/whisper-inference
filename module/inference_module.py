@@ -134,13 +134,17 @@ def split_stereo_audio_ffmpeg(input_file: str) -> Dict[str, str]:
     return {"Caller: ": left_file, "Reciever: ": right_file}
 
 
-def whisper_inference(model, audio_file: str) -> Tuple[List[str], float]:
+def whisper_inference(
+    model, audio_file: str, channel_uid: list
+) -> Tuple[List[str], float]:
     """
     Uses the OpenAI Whisper model to transcribe stereo audio for each channel.
+    TODO!: dockstring incomplete and wrong
 
     Args:
         model: An instance of the Whisper model loaded using `whisper.load_model`.
         audio_file (str): The stereo audio file path.
+        channel_uid (list): [left/speaker1, right/speaker2].
 
     Returns:
         A tuple containing a list of transcribed strings (one for each audio channel) and the time taken for the conversion process.
@@ -148,29 +152,34 @@ def whisper_inference(model, audio_file: str) -> Tuple[List[str], float]:
     Raises:
         ValueError: If the input audio is not in stereo format.
 
-    Example: TODO!: dockstring incomplete
+    Example:
         >>> transcriptions, conversion_time = whisper_inference('model.pth', 'audio.wav')
         >>> print(transcriptions)
         ['Transcription for left channel', 'Transcription for right channel']
         >>> print(conversion_time)
         3.14159
     """
-    start_processing_time = time.time()
+    start_audio_processing_time = time.time()
     # Split the stereo audio into left and right channels
     split_data = split_stereo_audio_ffmpeg(audio_file)
     # Perform the transcription for each audio channel while measuring conversion time
-    start_conversion_time = time.time()
+    stop_audio_processing_time = time.time()
+    audio_processing_time = stop_audio_processing_time - start_audio_processing_time
 
+    start_transcribtion_time = time.time()
     # [left, right]
     transcriptions = []
+    count = 0
     for channel, data in split_data.items():
         results = model.transcribe(data, language="en", fp16=False, temperature=0)
         results = pd.DataFrame(results["segments"])
-        results["text"] = channel + results["text"]
+        # prepend receiver and caller
+        results["text"] = channel_uid[count] + results["text"]
         results["channel"] = 0 if channel == "Reciever: " else 1
         transcriptions.append(results)
-
-    stop_conversion_time = time.time()
+        count = count + 1
+    stop_transcribtion_time = time.time()
+    transcribtion_time = stop_transcribtion_time - start_transcribtion_time
 
     # create a back and forth conversation order
     combined_transcription = pd.concat(transcriptions)
@@ -179,12 +188,11 @@ def whisper_inference(model, audio_file: str) -> Tuple[List[str], float]:
     )
     combined_transcription = combined_transcription.reset_index(drop=True)
 
-    stop_processing_time = time.time()
     return (
         transcriptions,
         combined_transcription,
-        (stop_conversion_time - start_conversion_time),
-        (start_processing_time - stop_processing_time),
+        transcribtion_time,
+        audio_processing_time,
     )
 
 
@@ -306,6 +314,7 @@ def whisper_to_vtt(
     audio_file_path: str,
     save_output_as_file: bool = True,
     output_dir: str = "/tmp/whisper_temp",
+    channel_uid: list = ["left_channel", "right_channel"],
 ) -> Dict[str, str]:
     """
     Converts an audio file to three VTT (WebVTT) files containing the speech of the caller, receiver, and conversation.
@@ -315,6 +324,7 @@ def whisper_to_vtt(
         audio_file_path (str): The path to the audio file to be processed.
         save_output_as_file (bool, optional): Whether to save the output as files or not. Defaults to True.
         output_dir (str, optional): The directory to save the VTT files. Defaults to "/tmp/whisper_temp".
+        channel_uid (list): [left/speaker1, right/speaker2] defaulted to ["left_channel", "right_channel"].
 
     Returns:
         dict: A dictionary containing the VTT output as strings with keys 'Caller', 'Receiver', and 'Conversation'.
@@ -324,7 +334,7 @@ def whisper_to_vtt(
     os.makedirs(output_dir, exist_ok=True)
 
     # Perform inference
-    result = whisper_inference(model, audio_file_path)
+    result = whisper_inference(model, audio_file_path, channel_uid)
 
     # Convert inference results to VTT strings
     caller = create_custom_vtt(result[0][0], "start", "end", "text")
@@ -341,9 +351,11 @@ def whisper_to_vtt(
             f.write(conversation)
 
     return {
-        "Caller": caller.split("\n"),
-        "Receiver": receiver.split("\n"),
-        "Conversation": conversation.split("\n"),
+        "left_channel": caller.split("\n"),
+        "right_channel": receiver.split("\n"),
+        "conversation": conversation.split("\n"),
+        "audio_conversion_time": result[3],
+        "audio_transcribtion_time": result[2],
     }
 
 
