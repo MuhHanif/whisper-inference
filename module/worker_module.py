@@ -128,7 +128,7 @@ def consumer_queue(whisper_config: str, json_config: str) -> None:
 
         # should we upload metadata too?
 
-        ch.basic_ack(delivery_tag=method.delivery_tag)
+        # ch.basic_ack(delivery_tag=method.delivery_tag)
         # ============ response message to another queue ============ #
         connection_response = pika.BlockingConnection(params)
         channel_response = connection_response.channel()
@@ -153,7 +153,7 @@ def consumer_queue(whisper_config: str, json_config: str) -> None:
     channel.basic_consume(
         queue=config["queue"],
         on_message_callback=callback,
-        auto_ack=False,
+        auto_ack=True,
     )
     print("Waiting for messages. To exit, press CTRL+C")
     channel.start_consuming()
