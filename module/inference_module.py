@@ -79,7 +79,7 @@ def split_stereo_audio_ffmpeg(input_file: str) -> Dict[str, str]:
     channel_count = [
         "ffprobe",
         "-i",
-        input_file,
+        f"{input_file}",
         "-show_entries",
         "stream=channels",
         "-select_streams",
