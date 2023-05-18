@@ -8,10 +8,16 @@ import time
 from .inference_module import *
 import uuid
 from threading import Thread
+import boto3
+from botocore.exceptions import NoCredentialsError
+from botocore.client import Config
 
 print(os.getcwd())
 with open("config_file.json") as f:
     config = json.load(f)
+
+with open("minio_creds.json") as creds_file:
+    creds = json.load(creds_file)
 
 app = FastAPI()
 # might be faster if using queue instead of storing as a file
@@ -28,6 +34,54 @@ if config["debug_without_model"]==False:
 audio_file = {}
 internal_queue = Queue(maxsize=config["maximum_queue"])
 
+
+def upload_to_bucket(file_path: str) -> None:
+    """
+    Uploads a file to an S3 bucket using the specified file path.
+
+    Args:
+        file_path (str): The local file path of the file to upload.
+
+    Raises:
+        NoCredentialsError: If no AWS credentials are found or they are invalid.
+    """
+    
+    # Specify the profile name from the .aws/credentials file
+    # profile_name = 's3fs-minio'
+    profile_name = config["bucket_cred_profile"]
+
+    # Create a session using the specified profile
+    # TODO! cant use profile, pass as args instead
+    session = boto3.session.Session() # boto3.Session(profile_name=profile_name)
+
+    # Create an S3 client using the session
+    s3_client = session.client(
+        's3',
+        endpoint_url=creds["endpoint"],
+        aws_access_key_id=creds["access_key_id"],
+        aws_secret_access_key=creds["secret_access_key"],
+        config=Config(signature_version='s3v4'),
+    
+    )
+
+    # Specify the bucket name
+    # bucket_name = "transcribed-stash"
+    bucket_name = config["bucket_name"]
+
+    try:
+        file_name = os.path.basename(file_path)
+
+        # Specify the local file path and desired S3 key (file name)
+        local_file_path = file_path
+        s3_key = file_name
+        
+        # Upload the file to the bucket
+        s3_client.upload_file(file_path, bucket_name, s3_key)
+        print("File uploaded successfully.")
+    except NoCredentialsError:
+        print("No AWS credentials found or they are invalid.")    
+
+    pass
 
 # wrap process and run this concurrently indefinitely forever and ever :P
 def process_audio():
@@ -46,8 +100,16 @@ def process_audio():
             # this function call return transcribtion as dict and write it to disk
             # TODO! file need to be purged periodically or once the task is finished
             output = whisper_to_vtt(
-                model, file_path, output_dir=config["output_vtt_dir"]
+                model=model, 
+                audio_file_path=file_path, 
+                output_dir=config["output_vtt_dir"], 
+                save_output_as_file=config["upload_to_bucket"],
             )
+            # upload all vtt to s3 bucket 
+            if config["upload_to_bucket"]:
+                for upload_file_path in output["list_file_path"]:
+                    upload_to_bucket(upload_file_path)
+
             # store transcribed output
             audio_file[uuid]["status"] = "transcribed"
             audio_file[uuid]["output_as_text"] = output
@@ -56,7 +118,7 @@ def process_audio():
             print(output)
             # store error message reason
             audio_file[uuid]["output_as_text"] = output
-            audio_file[uuid]["status"] = "failed to transcribe audio"
+            audio_file[uuid]["status"] = "failed to transcribe audio"   
         print()
 
 
@@ -198,11 +260,13 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> dict:
 @app.get("/transcribtion_status/{uuid_name}")
 async def transcribtion_status(uuid_name: str):
     """gets queue info"""
-    
-    try:
-        return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
-    except KeyError:
-        raise HTTPException(status_code=404, detail="UUID not found")
+    if config["debug"]:
+        return audio_file[uuid_name]
+    else:
+        try:
+            return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
+        except KeyError:
+            raise HTTPException(status_code=404, detail="UUID not found")
 
 @app.get("/queue_length")
 async def queue_length():
