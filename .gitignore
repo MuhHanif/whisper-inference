@@ -1,2 +1,4 @@
 __pycache__/
 conf.json
+credentials
+minio_creds.json
