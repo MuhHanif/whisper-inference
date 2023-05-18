@@ -6,5 +6,9 @@
     "check_timer": 0.1,
     "output_vtt_dir": "/kaggle/working/test",
     "audio_folder": "/content/uploads",
-    "debug_without_model": true
+    "debug_without_model": false,
+    "bucket_cred_profile": "s3fs-minio",
+    "upload_to_bucket": true,
+    "bucket_name": "transcribed-stash",
+    "debug": true
 }
