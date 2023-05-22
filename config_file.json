@@ -10,5 +10,7 @@
     "bucket_cred_profile": "s3fs-minio",
     "upload_to_bucket": true,
     "bucket_name": "transcribed-stash",
-    "debug": true
+    "debug": true,
+    "ephemeral_data_duration": 500,
+    "ephemeral_check_period": 5
 }
