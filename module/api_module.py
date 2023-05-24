@@ -23,7 +23,7 @@ app = FastAPI()
 
 # pin the model into memory
 if config["debug_without_model"] == False:
-    model = load_model(config["models"])
+    model = load_model(config["models"], config["cuda_device"])
 
 # local data
 
@@ -137,7 +137,7 @@ def process_audio():
         # TODO! file need to be purged periodically or once the task is finished
         file_path = audio_file[uuid]["file"]
         # switch status to processed to indicate if this file is currently being processed
-        audio_file[uuid]["status"] = "processed"
+        audio_file[uuid]["status"] = "processing"
         # put try catch block here so the thread wont fail
         try:
             # raise ValueError("manually raised failed transcribtion")
@@ -298,7 +298,7 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> dict:
     # store necessary data to be processed
     audio_file[uuid_name] = {}
     audio_file[uuid_name]["file"] = file_path
-    # status can be (stored or processed)
+    # status can be (stored or processing)
     audio_file[uuid_name]["status"] = "stored"
     # time is required for other function to periodicaly check if
     # this task is being processed

@@ -1,6 +1,6 @@
 {
     "models": "medium",
-    "cuda_device": "cuda:0",
+    "cuda_device": "cuda:1",
     "enable_tunnel": false,
     "maximum_queue": 10,
     "check_timer": 0.1,

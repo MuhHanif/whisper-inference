@@ -402,9 +402,7 @@ def load_model(model_name: str, device: str = "cuda:0"):
     """
     # Load the Whisper model
     tic = time.time()
-    model = whisper.load_model(model_name).to(
-        device
-    )  # BUG: not working as intended, cannot specify device!
+    model = whisper.load_model(model_name, device=device)
     toc = time.time()
     print(f"Model loaded, took {round(toc-tic, 2)} second(s)")
 
