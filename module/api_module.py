@@ -10,6 +10,26 @@ import uuid
 from threading import Thread
 import boto3
 from botocore.client import Config
+from pydantic import BaseModel
+
+
+class upload_audio(BaseModel):
+    """
+    data class for upload_audio_to_queue_process
+    """
+
+    queue_id: str
+    status: str
+
+
+class queue_info(BaseModel):
+    """
+    data class for queue_length
+    """
+
+    queue_length: int
+    max_queue_length: int
+
 
 print(os.getcwd())
 # TODO! change this to proper path
@@ -103,8 +123,9 @@ def purge_data_periodially():
                     os.remove(value["file"])
 
                     # delete VTT
-                    for file in value["list_file_path"]:
-                        os.remove(file)
+                    if config["upload_to_bucket"]:
+                        for file in value["list_file_path"]:
+                            os.remove(file)
                     # delete dict
                     del audio_file[key]
 
@@ -175,95 +196,27 @@ process_audio_thread.start()
 purging_thread.start()
 
 
-@app.get("/testing/{name}")
-async def test_connection(name: str):
-    return {"message": f"Hello, {name}!"}
-
-
-@app.post("/upload/audio/")
-async def upload_audio_file(file: UploadFile = File(...)) -> dict:
-    """
-    Endpoint that accepts an audio file and saves it to a specified folder.
-
-    Args:
-        file (UploadFile): The audio file to upload.
-
-    Returns:
-        dict: A JSON object containing the filename of the uploaded file.
-    """
-    # Specify the folder where the file will be saved
-    upload_folder = "/content/uploads"
-
-    # Create the folder if it doesn't exist
-    os.makedirs(upload_folder, exist_ok=True)
-
-    # Check if the uploaded file is an audio file
-    valid_extensions = [".mp3", ".wav", ".ogg"]
-    file_extension = os.path.splitext(file.filename)[1].lower()
-
-    if file_extension not in valid_extensions:
-        raise HTTPException(status_code=400, detail="File must be an audio file")
-
-    # Save the file to the specified folder
-    file_path = os.path.join(upload_folder, file.filename)
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
-
-    output = whisper_to_vtt(model, file_path, output_dir="/kaggle/working/test")
-
-    # im disabling using queue for now
-    # contents: bytes = await file.read()
-    # audio_queue.put(contents)
-
-    return output
-
-
-@app.post("/upload/audio_test_upload/")
-async def upload_audio_file_test_upload(file: UploadFile = File(...)) -> dict:
-    """
-    Endpoint that accepts an audio file and saves it to a specified folder.
-
-    Args:
-        file (UploadFile): The audio file to upload.
-
-    Returns:
-        dict: A JSON object containing the filename of the uploaded file.
-    """
-    # Specify the folder where the file will be saved
-    upload_folder = "/content/uploads"
-
-    # Create the folder if it doesn't exist
-    os.makedirs(upload_folder, exist_ok=True)
-
-    # Check if the uploaded file is an audio file
-    valid_extensions = [".mp3", ".wav", ".ogg"]
-    file_extension = os.path.splitext(file.filename)[1].lower()
-
-    if file_extension not in valid_extensions:
-        raise HTTPException(status_code=400, detail="File must be an audio file")
-
-    # Save the file to the specified folder
-    file_path = os.path.join(upload_folder, file.filename)
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
-
-    # im disabling using queue for now
-    # contents: bytes = await file.read()
-    # audio_queue.put(contents)
-
-    return {"message": "working as intended"}
+@app.get("/")
+async def test_connection():
+    return {"message": f"whisper API v0.1, go to /docs/ for documentation"}
 
 
 @app.post("/upload_to_queue_process/")
-async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> dict:
+async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> upload_audio:
     """
-    Endpoint that accepts an audio file and saves it to a specified folder.
+    Endpoint that accepts an audio file and push it to internal queue to be processed
 
-    Args:
-        file (UploadFile): The audio file to upload.
+    will return queue id that can be used on `/transcribtion_status/` endpoint to retrieve transcription
 
-    Returns:
-        dict: A JSON object containing the filename of the uploaded file.
+    Arg:
+        file (UploadFile): Audio file to upload `.mp3`, `.ogg`, `.wav`.
+
+    example output:
+    `    {
+        "queue_id": "68f541ba-db94-49f7-837d-502fba269a1a",
+        "status": "stored"
+        }
+    `
     """
 
     # tell client if queue is full
@@ -286,12 +239,13 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> dict:
     if file_extension not in valid_extensions:
         raise HTTPException(status_code=400, detail="File must be an audio file")
 
+    uuid_name = str(uuid.uuid4())
+
     # Save the file to the specified folder
-    file_path = os.path.join(upload_folder, file.filename)
+    file_path = os.path.join(upload_folder, f"{uuid_name}{file_extension}")
     with open(file_path, "wb") as f:
         f.write(await file.read())
 
-    uuid_name = str(uuid.uuid4())
     # put process in queue
     internal_queue.put(uuid_name)
 
@@ -304,64 +258,36 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> dict:
     # this task is being processed
     audio_file[uuid_name]["timestamp"] = time.time()
 
-    return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
+    # return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
+    return upload_audio(queue_id=uuid_name, status=audio_file[uuid_name]["status"])
 
 
-@app.get("/transcribtion_status/{uuid_name}")
-async def transcribtion_status(uuid_name: str):
-    """gets queue info"""
-    if config["debug"]:
+@app.get("/transcription_status/{uuid_name}")
+async def transcription_status(uuid_name: str):
+    """"""
+    try:
+        # TODO! put this in struct
         return audio_file[uuid_name]
-    else:
-        try:
-            return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
-        except KeyError:
-            raise HTTPException(status_code=404, detail="UUID not found")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="UUID not found")
 
 
 @app.get("/queue_length")
-async def queue_length():
-    """gets queue length"""
-    return {
-        "queue_length": internal_queue.qsize(),
-        "max__queue_length": config["maximum_queue"],
-    }
-
-
-@app.post("/upload/audio_test_preprocessing/")
-async def upload_audio_file_test_preprocessing(file: UploadFile = File(...)) -> dict:
+async def queue_length() -> queue_info:
     """
-    Endpoint that accepts an audio file and saves it to a specified folder.
+    get internal queue length and maximum queue of the worker
 
-    Args:
-        file (UploadFile): The audio file to upload.
-
-    Returns:
-        dict: A JSON object containing the filename of the uploaded file.
+    example output:
+    `    {
+        "queue_length": 2,
+        "max_queue_length": 10
+        }
+    `
     """
-    # Specify the folder where the file will be saved
-    upload_folder = "/content/uploads"
-
-    # Create the folder if it doesn't exist
-    os.makedirs(upload_folder, exist_ok=True)
-
-    # Check if the uploaded file is an audio file
-    valid_extensions = [".mp3", ".wav", ".ogg"]
-    file_extension = os.path.splitext(file.filename)[1].lower()
-
-    if file_extension not in valid_extensions:
-        raise HTTPException(status_code=400, detail="File must be an audio file")
-
-    # Save the file to the specified folder
-    file_path = os.path.join(upload_folder, file.filename)
-    with open(file_path, "wb") as f:
-        f.write(await file.read())
-
-    tic = time.time()
-    audio = split_stereo_audio_ffmpeg(file_path)
-    tac = time.time()
-    # im disabling using queue for now
-    # contents: bytes = await file.read()
-    # audio_queue.put(contents)
-
-    return {"message": f"processing audio took {tac-tic} second(s)"}
+    # return {
+    #     "queue_length": internal_queue.qsize(),
+    #     "max__queue_length": config["maximum_queue"],
+    # }
+    return queue_info(
+        queue_length=internal_queue.qsize(), max_queue_length=config["maximum_queue"]
+    )

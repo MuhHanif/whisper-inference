@@ -328,15 +328,15 @@ def whisper_to_vtt(
 
     Return:
         dict:
-            'left_channel' (str): transcribed left channel, 
-            'right_channel' (str): transcribed right channel, 
+            'left_channel' (str): transcribed left channel,
+            'right_channel' (str): transcribed right channel,
             'conversation' (str): transcribed both channel,
             'audio_conversion_time' (int): ffmpeg conversion time,
             'audio_transcribtion_time' (int): whisper inference time,
             'list_file_path'(list, optional): saved file path.
-    
+
     Outputs:
-        bunch of vtt files on save_output_as_files with format 
+        bunch of vtt files on save_output_as_files with format
             1. {audio_file_name}_{channel_uid[0]}.vtt
             2. {audio_file_name}_{channel_uid[1]}.vtt
             3. {audio_file_name}_conversation.vtt
@@ -349,7 +349,7 @@ def whisper_to_vtt(
     result = whisper_inference(model, audio_file_path, channel_uid)
 
     # get audio name
-    # /path/to/audio/file.mp3 
+    # /path/to/audio/file.mp3
     file_name = os.path.basename(audio_file_path)
     file_name = os.path.splitext(file_name)[0]
 
@@ -358,12 +358,15 @@ def whisper_to_vtt(
     receiver = create_custom_vtt(result[0][1], "start", "end", "text")
     conversation = create_custom_vtt(result[1], "start", "end", "text")
 
-    
     # Save VTT files
     if save_output_as_file:
-        with open(os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"), "w") as f:
+        with open(
+            os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"), "w"
+        ) as f:
             f.write(caller)
-        with open(os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"), "w") as f:
+        with open(
+            os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"), "w"
+        ) as f:
             f.write(receiver)
         with open(os.path.join(output_dir, f"{file_name}_conversation.vtt"), "w") as f:
             f.write(conversation)
@@ -381,7 +384,7 @@ def whisper_to_vtt(
         returned_output["list_file_path"] = [
             os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"),
             os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"),
-            os.path.join(output_dir, f"{file_name}_conversation.vtt")
+            os.path.join(output_dir, f"{file_name}_conversation.vtt"),
         ]
 
     return returned_output
@@ -391,7 +394,7 @@ def load_model(model_name: str, device: str = "cuda:0"):
     """
     Loads a Whisper model to GPU
 
-    BUG! when defining cuda device. whisper always tried to load to cuda:0! 
+    BUG! when defining cuda device. whisper always tried to load to cuda:0!
     probably problem with load_model method
 
     Args:

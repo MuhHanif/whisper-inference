@@ -1,6 +1,6 @@
 {
     "models": "medium",
-    "cuda_device": "cuda:1",
+    "cuda_device": "cuda:0",
     "enable_tunnel": false,
     "maximum_queue": 10,
     "check_timer": 0.1,
@@ -8,9 +8,9 @@
     "audio_folder": "/content/uploads",
     "debug_without_model": false,
     "bucket_cred_profile": "s3fs-minio",
-    "upload_to_bucket": true,
+    "upload_to_bucket": false,
     "bucket_name": "transcribed-stash",
     "debug": true,
-    "ephemeral_data_duration": 500,
+    "ephemeral_data_duration": 10,
     "ephemeral_check_period": 5
 }
