@@ -4,3 +4,5 @@ credentials
 minio_creds.json
 whisper_env/
 .vscode/
+runpod_creds.json
+simplehttpserver_config.json

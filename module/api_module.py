@@ -31,6 +31,10 @@ class queue_info(BaseModel):
     max_queue_length: int
 
 
+class queue_packet(BaseModel):
+    status: int
+
+
 print(os.getcwd())
 # TODO! change this to proper path
 with open("config_file.json") as f:
@@ -39,10 +43,17 @@ with open("config_file.json") as f:
 with open("minio_creds.json") as creds_file:
     creds = json.load(creds_file)
 
+with open("runpod_creds.json") as runpod_creds_file:
+    runpod_creds = json.load(runpod_creds_file)
+
+
+with open("simplehttpserver_config.json") as simple_http_server_config:
+    simple_http_conf = json.load(simple_http_server_config)
+
 app = FastAPI()
 
 # pin the model into memory
-if config["debug_without_model"] == False:
+if config["use_runpod"] == False:
     model = load_model(config["models"], config["cuda_device"])
 
 # local data
@@ -155,7 +166,6 @@ def process_audio():
         uuid = internal_queue.get()
         print("thread is running")
         # retrieve audio file path that has been downloaded
-        # TODO! file need to be purged periodically or once the task is finished
         file_path = audio_file[uuid]["file"]
         # switch status to processed to indicate if this file is currently being processed
         audio_file[uuid]["status"] = "processing"
@@ -163,13 +173,30 @@ def process_audio():
         try:
             # raise ValueError("manually raised failed transcribtion")
             # this function call return transcribtion as dict and write it to disk
-            # TODO! file need to be purged periodically or once the task is finished
-            output = whisper_to_vtt(
-                model=model,
-                audio_file_path=file_path,
-                output_dir=config["output_vtt_dir"],
-                save_output_as_file=config["upload_to_bucket"],
-            )
+            if config["use_runpod"]:
+                # use runpod api
+                output = runpod_whisper_to_vtt(
+                    api_key=runpod_creds["api_key"],
+                    model=config["models"],
+                    audio_file_path=file_path,
+                    output_dir=config["output_vtt_dir"],
+                    save_output_as_file=config["upload_to_bucket"],
+                    #########################################################################
+                    #                                                                       #
+                    #           TODO! change this with proper S3 configuration!             #
+                    #                                                                       #
+                    #########################################################################
+                    simple_http_server_config="simplehttpserver_config.json",
+                )
+                pass
+            else:
+                # use local GPU
+                output = whisper_to_vtt(
+                    model=model,
+                    audio_file_path=file_path,
+                    output_dir=config["output_vtt_dir"],
+                    save_output_as_file=config["upload_to_bucket"],
+                )
             # upload all vtt to s3 bucket
             if config["upload_to_bucket"]:
                 for upload_file_path in output["list_file_path"]:
@@ -284,10 +311,6 @@ async def queue_length() -> queue_info:
         }
     `
     """
-    # return {
-    #     "queue_length": internal_queue.qsize(),
-    #     "max__queue_length": config["maximum_queue"],
-    # }
     return queue_info(
         queue_length=internal_queue.qsize(), max_queue_length=config["maximum_queue"]
     )

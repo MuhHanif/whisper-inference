@@ -6,11 +6,11 @@
     "check_timer": 0.1,
     "output_vtt_dir": "/kaggle/working/test",
     "audio_folder": "/content/uploads",
-    "debug_without_model": false,
+    "use_runpod": true,
     "bucket_cred_profile": "s3fs-minio",
     "upload_to_bucket": false,
     "bucket_name": "transcribed-stash",
     "debug": true,
-    "ephemeral_data_duration": 10,
+    "ephemeral_data_duration": 500,
     "ephemeral_check_period": 5
 }
