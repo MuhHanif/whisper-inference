@@ -278,6 +278,7 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> upload_
 
     # store necessary data to be processed
     audio_file[uuid_name] = {}
+    audio_file[uuid_name]["queue_id"] = uuid_name
     audio_file[uuid_name]["file"] = file_path
     # status can be (stored or processing)
     audio_file[uuid_name]["status"] = "stored"
