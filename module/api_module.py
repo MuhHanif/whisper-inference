@@ -11,6 +11,7 @@ from threading import Thread
 import boto3
 from botocore.client import Config
 from pydantic import BaseModel
+import urllib
 
 
 class upload_audio(BaseModel):
@@ -280,6 +281,72 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> upload_
     audio_file[uuid_name] = {}
     audio_file[uuid_name]["queue_id"] = uuid_name
     audio_file[uuid_name]["file"] = file_path
+    # status can be (stored or processing)
+    audio_file[uuid_name]["status"] = "stored"
+    # time is required for other function to periodicaly check if
+    # this task is being processed
+    audio_file[uuid_name]["timestamp"] = time.time()
+
+    # return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
+    return upload_audio(queue_id=uuid_name, status=audio_file[uuid_name]["status"])
+
+
+@app.post("/get_to_queue_process/")
+async def get_audio_to_queue_process(url: str) -> upload_audio:
+    """
+    Endpoint that accepts an audio file url and push it to internal queue to be processed
+
+    will return queue id that can be used on `/transcribtion_status/` endpoint to retrieve transcription
+
+    Arg:
+        url : Audio file url `.ogg`.
+
+    example output:
+    `    {
+        "queue_id": "68f541ba-db94-49f7-837d-502fba269a1a",
+        "status": "stored"
+        }
+    `
+    """
+
+    # tell client if queue is full
+    if internal_queue.full():
+        raise HTTPException(
+            status_code=503,
+            detail=f"worker queue is full! there's {config['maximum_queue']} audio in the queue",
+        )
+
+    # Specify the folder where the file will be saved
+    upload_folder = config["audio_folder"]
+
+    # Create the folder if it doesn't exist
+    os.makedirs(upload_folder, exist_ok=True)
+
+    uuid_name = str(uuid.uuid4())
+
+    # Save the file to the specified folder
+    parsed_url = urllib.parse.urlparse(url)
+    file_path = os.path.join(upload_folder, f"{uuid_name}.ogg")
+
+    # store actual ogg file name
+    filename = urllib.parse.unquote(parsed_url.path.split("/")[-1])
+
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(file_path, "wb") as file:
+            file.write(response.content)
+        print("File downloaded successfully.")
+    else:
+        print("Failed to download the file.")
+
+    # put process in queue
+    internal_queue.put(uuid_name)
+
+    # store necessary data to be processed
+    audio_file[uuid_name] = {}
+    audio_file[uuid_name]["queue_id"] = uuid_name
+    audio_file[uuid_name]["file"] = file_path
+    audio_file[uuid_name]["file_name_from_url"] = filename
     # status can be (stored or processing)
     audio_file[uuid_name]["status"] = "stored"
     # time is required for other function to periodicaly check if
