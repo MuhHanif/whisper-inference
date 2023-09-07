@@ -6,3 +6,6 @@ whisper_env/
 .vscode/
 runpod_creds.json
 simplehttpserver_config.json
+audio_folder/
+vtt_folder/
+temp_audio_server_stash/
