@@ -9,3 +9,5 @@ simplehttpserver_config.json
 audio_folder/
 vtt_folder/
 temp_audio_server_stash/
+simple_demo.py
+run_insta_worker.sh
