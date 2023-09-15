@@ -142,7 +142,36 @@ def split_stereo_audio_ffmpeg(input_file: str) -> Dict[str, str]:
     return {"Caller: ": left_file, "Reciever: ": right_file}
 
 
-def whisper_inference(
+def count_number_of_channel(input_file: str) -> int:
+    """count # of channels using ffmpeg.
+
+    Args:
+        input_file (str): The path to the input audio file.
+
+    Returns: int number of channels 
+    """
+
+    # stereo check
+    channel_count = [
+        "ffprobe",
+        "-i",
+        f"{input_file}",
+        "-show_entries",
+        "stream=channels",
+        "-select_streams",
+        "a:0",
+        "-of",
+        "compact=p=0:nk=1",
+        "-v",
+        "0",
+    ]
+    result = subprocess.run(channel_count, stdout=subprocess.PIPE)
+    numb_of_channels = int(result.stdout.decode("utf-8")[0])
+
+    return numb_of_channels
+    
+
+def whisper_inference_conversation(
     model, audio_file: str, channel_uid: list
 ) -> Tuple[List[str], float]:
     """
@@ -204,6 +233,43 @@ def whisper_inference(
         audio_processing_time,
     )
 
+
+def whisper_inference_single_channel(
+    model, audio_file: str, channel_uid: str
+) -> Tuple[List[str], float]:
+    """
+    Uses the OpenAI Whisper model to transcribe mono audio channel.
+
+    Args:
+        model: An instance of the Whisper model loaded using `whisper.load_model`.
+        audio_file (str): The stereo audio file path.
+        channel_uid (str): left/speaker1.
+
+    Returns:
+        A tuple containing a list of transcribed strings and the time taken for the conversion process.
+
+    """
+
+    start_transcribtion_time = time.time()
+
+    results = model.transcribe(audio_file, language="en", fp16=False, temperature=0)
+    results = pd.DataFrame(results["segments"])
+
+    # prepend receiver and caller
+    results["text"] = channel_uid + results["text"]
+    results["channel"] = 0
+
+    stop_transcribtion_time = time.time()
+    transcribtion_time = stop_transcribtion_time - start_transcribtion_time
+
+    transcriptions = [results]
+
+    return (
+        transcriptions,
+        None, # no conversation
+        transcribtion_time,
+        0, # no audio preprocessing
+    )
 
 def create_srt(
     df: pd.DataFrame,
@@ -354,49 +420,92 @@ def whisper_to_vtt(
     # Create the folder if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
-    # Perform inference
-    result = whisper_inference(model, audio_file_path, channel_uid)
+    channel_count = count_number_of_channel(audio_file_path)
 
-    # get audio name
-    # /path/to/audio/file.mp3
-    file_name = os.path.basename(audio_file_path)
-    file_name = os.path.splitext(file_name)[0]
+    if channel_count == 2:
+        # Perform inference
+        result = whisper_inference_conversation(model, audio_file_path, channel_uid)
 
-    # Convert inference results to VTT strings
-    caller = create_custom_vtt(result[0][0], "start", "end", "text")
-    receiver = create_custom_vtt(result[0][1], "start", "end", "text")
-    conversation = create_custom_vtt(result[1], "start", "end", "text")
+        # get audio name
+        # /path/to/audio/file.mp3
+        file_name = os.path.basename(audio_file_path)
+        file_name = os.path.splitext(file_name)[0]
 
-    # Save VTT files
-    if save_output_as_file:
-        with open(
-            os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"), "w"
-        ) as f:
-            f.write(caller)
-        with open(
-            os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"), "w"
-        ) as f:
-            f.write(receiver)
-        with open(os.path.join(output_dir, f"{file_name}_conversation.vtt"), "w") as f:
-            f.write(conversation)
+        # Convert inference results to VTT strings
+        caller = create_custom_vtt(result[0][0], "start", "end", "text")
+        receiver = create_custom_vtt(result[0][1], "start", "end", "text")
+        conversation = create_custom_vtt(result[1], "start", "end", "text")
 
-    returned_output = {
-        "left_channel": caller.split("\n"),
-        "right_channel": receiver.split("\n"),
-        "conversation": conversation.split("\n"),
-        "audio_conversion_time": result[3],
-        "audio_transcribtion_time": result[2],
-    }
+        # Save VTT files
+        if save_output_as_file:
+            with open(
+                os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"), "w"
+            ) as f:
+                f.write(caller)
+            with open(
+                os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"), "w"
+            ) as f:
+                f.write(receiver)
+            with open(os.path.join(output_dir, f"{file_name}_conversation.vtt"), "w") as f:
+                f.write(conversation)
 
-    # append file path to make it easier to locate on down stream function
-    if save_output_as_file:
-        returned_output["list_file_path"] = [
-            os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"),
-            os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"),
-            os.path.join(output_dir, f"{file_name}_conversation.vtt"),
-        ]
+        returned_output = {
+            "left_channel": caller.split("\n"),
+            "right_channel": receiver.split("\n"),
+            "conversation": conversation.split("\n"),
+            "audio_conversion_time": result[3],
+            "audio_transcribtion_time": result[2],
+            "mode": "stereo_conversation",
+        }
 
-    return returned_output
+        # append file path to make it easier to locate on down stream function
+        if save_output_as_file:
+            returned_output["list_file_path"] = [
+                os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"),
+                os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"),
+                os.path.join(output_dir, f"{file_name}_conversation.vtt"),
+            ]
+
+        return returned_output
+
+    elif channel_count == 1:
+
+        # Perform inference
+        result = whisper_inference_single_channel(model, audio_file_path, channel_uid[0])
+
+
+        # get audio name
+        # /path/to/audio/file.mp3
+        file_name = os.path.basename(audio_file_path)
+        file_name = os.path.splitext(file_name)[0]
+
+        # Convert inference results to VTT strings
+        caller = create_custom_vtt(result[0][0], "start", "end", "text")
+
+
+        # Save VTT files
+        if save_output_as_file:
+            with open(
+                os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"), "w"
+            ) as f:
+                f.write(caller)
+
+        returned_output = {
+            "left_channel": caller.split("\n"),
+            "audio_transcribtion_time": result[2],
+            "mode": "mono_call",
+        }
+
+        # append file path to make it easier to locate on down stream function
+        if save_output_as_file:
+            returned_output["list_file_path"] = [
+                os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"),
+            ]
+
+        return returned_output
+    
+    else:
+        raise NotImplementedError
 
 
 def move_file_to_folder(
