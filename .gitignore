@@ -11,3 +11,4 @@ vtt_folder/
 temp_audio_server_stash/
 simple_demo.py
 run_insta_worker.sh
+scribles.py

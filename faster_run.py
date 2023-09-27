@@ -17,6 +17,7 @@ import urllib
 import argparse
 import uvicorn
 import whisper
+from faster_whisper import WhisperModel
 
 app = FastAPI()
 
@@ -25,35 +26,23 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Parse JSON configuration into a dictionary")
     
     # Add arguments for each field in the JSON
-    parser.add_argument("--models", type=str, required=True, help="Specify the model name (e.g., 'medium')")
-    parser.add_argument("--cuda_device", type=str, required=True, help="Specify the CUDA device (e.g., 'cuda:0')")
-    parser.add_argument("--maximum_queue", type=int, required=True, help="Specify the maximum queue size")
-    parser.add_argument("--output_vtt_dir", type=str, required=True, help="Specify the output VTT directory")
-    parser.add_argument("--audio_folder", type=str, required=True, help="Specify the audio folder directory")
-    parser.add_argument("--ephemeral_data_duration", type=int, required=True, help="Specify the ephemeral data duration")
-    parser.add_argument("--ephemeral_check_period", type=int, required=True, help="Specify the ephemeral check period")
-    parser.add_argument("--port", type=int, required=True, help="port number ie: 8888")
-    parser.add_argument("--host", type=str, required=True, help="host ip ie: 0.0.0.0")
+    parser.add_argument("--models", type=str, default='medium', help="Specify the model name (e.g., 'medium', 'large-v2'). default: medium")
+    parser.add_argument("--device", type=str, default='cuda', help="Specify the inference device (e.g., 'cuda', 'cpu'). default: 'cuda'")
+    parser.add_argument("--num_workers", type=int, default=1, help="Specify the ammount of concurent thread that's running on the gpu. default: 1")
+    parser.add_argument("--maximum_queue", type=int, default=10, help="Specify the maximum queue size. default: 10")
+    parser.add_argument("--output_vtt_dir", type=str, required=True, help="Specify the output VTT directory, required for caching process")
+    parser.add_argument("--audio_folder", type=str, required=True, help="Specify the audio folder directory, required for caching process")
+    parser.add_argument("--ephemeral_data_duration", type=int, default=500, help="Specify the ephemeral data duration before deleting it. default: 500")
+    parser.add_argument("--ephemeral_check_period", type=int, default=5, help="Specify the ephemeral check period to check if the transcription is over the ephemeral_data_duration. default: 5")
+    parser.add_argument("--port", type=int, default=7777, help="port number. default: 7777")
+    parser.add_argument("--host", type=str, default="localhost", help="host ip. default: 'localhost'")
 
     args = parser.parse_args()
     
-    # Create a dictionary from the parsed arguments
-    config = {
-        "models": args.models,
-        "cuda_device": args.cuda_device,
-        "maximum_queue": args.maximum_queue,
-        "output_vtt_dir": args.output_vtt_dir,
-        "audio_folder": args.audio_folder,
-        "ephemeral_data_duration": args.ephemeral_data_duration,
-        "ephemeral_check_period": args.ephemeral_check_period,
-        "port": args.port,
-        "host": args.host
-    }
-
-    return config
+    return args
 
 
-def load_model(model_name: str, device: str = "cuda:0"):
+def load_model(model_name: str, device: str = "cuda"):
     """
     Loads a Whisper model to GPU
 
@@ -67,9 +56,9 @@ def load_model(model_name: str, device: str = "cuda:0"):
         whisper.model: The loaded Whisper model.
     """
     # Load the Whisper model
-    cuda_device = torch.device(device)
+
     tic = time.time()
-    model = module.load_model(model_name, device=cuda_device)
+    model = WhisperModel(model_name, device=device, compute_type="float16")
     toc = time.time()
 
     print(f"Model loaded, took {round(toc-tic, 2)} second(s)")
@@ -115,7 +104,7 @@ def purge_data_periodially():
                 if (
                     value["status"] == "transcribed"
                     and time.time() - value["timestamp"]
-                    > config["ephemeral_data_duration"]
+                    > config.ephemeral_data_duration
                 ):
                     # deleting audio file
                     os.remove(value["file"])
@@ -127,7 +116,7 @@ def purge_data_periodially():
                 if (
                     value["status"] == "failed to transcribe audio"
                     and time.time() - value["timestamp"]
-                    > config["ephemeral_data_duration"]
+                    > config.ephemeral_data_duration
                 ):
                     # deleting audio file
                     os.remove(value["file"])
@@ -138,7 +127,7 @@ def purge_data_periodially():
             print(purging_error)
 
         # sleep periodically to not hog resources
-        time.sleep(config["ephemeral_check_period"])
+        time.sleep(config.ephemeral_check_period)
 
 
 # wrap process and run this concurrently indefinitely forever and ever :P
@@ -158,10 +147,10 @@ def process_audio():
             # this function call return transcribtion as dict and write it to disk
             
             # use local GPU
-            output = whisper_to_vtt(
+            output = fast_whisper_to_vtt(
                 model=model,
                 audio_file_path=file_path,
-                output_dir=config["output_vtt_dir"],
+                output_dir=config.output_vtt_dir,
                 save_output_as_file=False,
             )  
 
@@ -208,7 +197,7 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> upload_
         )
 
     # Specify the folder where the file will be saved
-    upload_folder = config["audio_folder"]
+    upload_folder = config.audio_folder
 
     # Create the folder if it doesn't exist
     os.makedirs(upload_folder, exist_ok=True)
@@ -267,7 +256,7 @@ async def queue_length() -> queue_info:
     `
     """
     return queue_info(
-        queue_length=internal_queue.qsize(), max_queue_length=config["maximum_queue"]
+        queue_length=internal_queue.qsize(), max_queue_length=config.maximum_queue
     )
 
 
@@ -277,7 +266,7 @@ if __name__ == "__main__":
 
     # pin the model into memory
 
-    model = load_model(config["models"], config["cuda_device"])
+    model = load_model(config.models, config.device)
 
     # local data
 
@@ -285,7 +274,7 @@ if __name__ == "__main__":
     # create thread function to purge it
 
     audio_file = {}
-    internal_queue = Queue(maxsize=config["maximum_queue"])
+    internal_queue = Queue(maxsize=config.maximum_queue)
 
 
     process_audio_thread = Thread(target=process_audio)
@@ -294,5 +283,5 @@ if __name__ == "__main__":
     process_audio_thread.start()
     purging_thread.start()
 
-    uvicorn.run(app, port=config["port"], host=config["host"])
+    uvicorn.run(app, port=config.port, host=config.host)
     pass
