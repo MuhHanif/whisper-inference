@@ -18,6 +18,7 @@ import argparse
 import uvicorn
 import whisper
 from faster_whisper import WhisperModel
+import subprocess
 
 app = FastAPI()
 
@@ -27,8 +28,13 @@ def parse_arguments():
     
     # Add arguments for each field in the JSON
     parser.add_argument("--models", type=str, default='medium', help="Specify the model name (e.g., 'medium', 'large-v2'). default: medium")
+    # parser.add_argument("--parallel_device",
+    #     nargs='+',  # This tells argparse to accept one or more values as a list
+    #     help="Specify the model names (e.g., 'medium', 'large-v2')."
+    # )
+    # parser.add_argument("--device", type=str, default='cuda', help="Specify the inference device (e.g., 'cuda', 'cpu'). default: 'cuda'")
     parser.add_argument("--device", type=str, default='cuda', help="Specify the inference device (e.g., 'cuda', 'cpu'). default: 'cuda'")
-    parser.add_argument("--num_workers", type=int, default=1, help="Specify the ammount of concurent thread that's running on the gpu. default: 1")
+    parser.add_argument("--num_workers", type=int, default=5, help="Specify the ammount of concurent thread that's running on the gpu. default: 1")
     parser.add_argument("--maximum_queue", type=int, default=10, help="Specify the maximum queue size. default: 10")
     parser.add_argument("--output_vtt_dir", type=str, required=True, help="Specify the output VTT directory, required for caching process")
     parser.add_argument("--audio_folder", type=str, required=True, help="Specify the audio folder directory, required for caching process")
@@ -42,7 +48,7 @@ def parse_arguments():
     return args
 
 
-def load_model(model_name: str, device: str = "cuda"):
+def load_model(model_name: str, device: str = "cuda", num_workers: int = 5):
     """
     Loads a Whisper model to GPU
 
@@ -52,13 +58,21 @@ def load_model(model_name: str, device: str = "cuda"):
     Args:
         model_name (str): The name of the model to load.
         device (str): CUDA device to run on.
+        num_workers (int): number of worker threads
     Returns:
         whisper.model: The loaded Whisper model.
     """
     # Load the Whisper model
 
     tic = time.time()
-    model = WhisperModel(model_name, device=device, compute_type="float16")
+    model = WhisperModel(
+        model_name, 
+        device=device, 
+        compute_type="float16", 
+        device_index=[0,1],
+        cpu_threads=num_workers,
+        num_workers=num_workers,
+        )
     toc = time.time()
 
     print(f"Model loaded, took {round(toc-tic, 2)} second(s)")
@@ -233,6 +247,71 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> upload_
     return upload_audio(queue_id=uuid_name, status=audio_file[uuid_name]["status"])
 
 
+@app.post("/download_audio_to_queue_process/")
+async def download_audio_to_queue_process(url: str) -> upload_audio:
+    """
+    Endpoint that accepts an audio file URL and push it to internal queue to be processed
+
+    will return queue id that can be used on `/transcribtion_status/` endpoint to retrieve transcription
+
+    Arg:
+        url: Audio file url must have this file extension `.mp3`, `.ogg`, `.wav`.
+
+    example output:
+    `    {
+        "queue_id": "68f541ba-db94-49f7-837d-502fba269a1a",
+        "status": "stored"
+        }
+    `
+    """
+
+    # tell client if queue is full
+    if internal_queue.full():
+        raise HTTPException(
+            status_code=503,
+            detail=f"worker queue is full! there's {config['maximum_queue']} audio in the queue",
+        )
+
+    # Specify the folder where the file will be saved
+    upload_folder = config.audio_folder
+
+    # Create the folder if it doesn't exist
+    os.makedirs(upload_folder, exist_ok=True)
+
+    # Check if the uploaded file is an audio file
+    valid_extensions = [".mp3", ".wav", ".ogg"]
+    file_extension = os.path.splitext(url)[1].lower()
+
+    if file_extension not in valid_extensions:
+        raise HTTPException(status_code=400, detail="File must be an audio file")
+
+    uuid_name = str(uuid.uuid4())
+
+    # Save the file to the specified folder
+    file_path = os.path.join(upload_folder, f"{uuid_name}{file_extension}")
+
+    command = f"wget -O {file_path} {url}"
+
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output, error = process.communicate()
+
+    # put process in queue
+    internal_queue.put(uuid_name)
+
+    # store necessary data to be processed
+    audio_file[uuid_name] = {}
+    audio_file[uuid_name]["queue_id"] = uuid_name
+    audio_file[uuid_name]["file"] = file_path
+    # status can be (stored or processing)
+    audio_file[uuid_name]["status"] = "stored"
+    # time is required for other function to periodicaly check if
+    # this task is being processed
+    audio_file[uuid_name]["timestamp"] = time.time()
+
+    # return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
+    return upload_audio(queue_id=uuid_name, status=audio_file[uuid_name]["status"])
+
+
 @app.get("/transcription_status/{uuid_name}")
 async def transcription_status(uuid_name: str):
     """"""
@@ -266,7 +345,7 @@ if __name__ == "__main__":
 
     # pin the model into memory
 
-    model = load_model(config.models, config.device)
+    model = load_model(config.models, config.device, config.num_workers)
 
     # local data
 
