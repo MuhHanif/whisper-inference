@@ -680,6 +680,10 @@ def fast_whisper_to_vtt(
         receiver = create_custom_vtt(result[0][1], "start", "end", "text")
         conversation = create_custom_vtt(result[1], "start", "end", "text")
 
+        caller_raw = [[round(x[0], 2), round(x[1], 2), x[2]] for x in result[0][0][["start", "end", "text"]].to_records(index=False)]
+        receiver_raw = [[round(x[0], 2), round(x[1], 2), x[2]] for x in result[0][1][["start", "end", "text"]].to_records(index=False)]
+
+
         # Save VTT files
         if save_output_as_file:
             with open(
@@ -696,6 +700,8 @@ def fast_whisper_to_vtt(
         returned_output = {
             "left_channel": caller.split("\n"),
             "right_channel": receiver.split("\n"),
+            "left_channel_raw": caller_raw,
+            "left_channel_raw": receiver_raw,
             "conversation": conversation.split("\n"),
             "audio_conversion_time": result[3],
             "audio_transcribtion_time": result[2],
@@ -725,6 +731,7 @@ def fast_whisper_to_vtt(
 
         # Convert inference results to VTT strings
         caller = create_custom_vtt(result[0][0], "start", "end", "text")
+        caller_raw = [[round(x[0], 2), round(x[1], 2), x[2]] for x in result[0][0][["start", "end", "text"]].to_records(index=False)]
 
 
         # Save VTT files
@@ -736,6 +743,7 @@ def fast_whisper_to_vtt(
 
         returned_output = {
             "left_channel": caller.split("\n"),
+            "left_channel_raw": caller_raw,
             "audio_transcribtion_time": result[2],
             "mode": "mono_call",
         }

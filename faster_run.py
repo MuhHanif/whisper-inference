@@ -19,6 +19,8 @@ import uvicorn
 import whisper
 from faster_whisper import WhisperModel
 import subprocess
+import http.client
+import ast
 
 app = FastAPI()
 
@@ -101,6 +103,15 @@ class queue_packet(BaseModel):
     status: int
 
 
+class summarize_gpt(BaseModel):
+    gpt_worker_ip: str
+    gpt_worker_port: str
+    gpt_worker_endpoint: str
+    instruction: str = None
+    audio_file_url: str
+    token_limit: int
+
+
 def purge_data_periodially():
     """
     purge data from local disk and dict after x minutes (epehemeral data) when transcribtion either succeed or failed
@@ -168,9 +179,46 @@ def process_audio():
                 save_output_as_file=False,
             )  
 
+            # do GPT sumarization with instruction
+            if "GPT_instruction" in audio_file[uuid]:
+                gpt_start = time.time()
+                audio_file[uuid]["GPT_endpoint"]
+                conn = http.client.HTTPConnection(audio_file[uuid]["GPT_ip"], audio_file[uuid]["GPT_port"])
+
+                headersList = {
+                    "Accept": "*/*",
+                    "User-Agent": "Thunder Client (https://www.thunderclient.com)",
+                    "Content-Type": "application/json" 
+                }
+                
+                if "right_channel" in output:
+                    combined_channel = ast.literal_eval(repr(output["conversation"]))
+                else:
+                    combined_channel = ast.literal_eval(repr(output["left_channel"]))
+                payload = json.dumps({
+                    "model": "zephyr-7b", 
+                    "prompt": f'<|system|></s><|user|>{audio_file[uuid]["GPT_instruction"]}{combined_channel}', 
+                    "temperature": 0.7, 
+                    "repetition_penalty": 1.0, 
+                    "top_p": 0.9, 
+                    "max_new_tokens": audio_file[uuid]["token_limit"], 
+                    "stop": "\n[INST]", 
+                    "stop_token_ids": None, 
+                    "echo": False
+                    
+                })
+
+                conn.request("POST", audio_file[uuid]["GPT_endpoint"] , payload, headersList)
+                response = conn.getresponse()
+                result = response.read()
+                audio_file[uuid]["GPT_output"]=json.loads(result)
+                gpt_stop = time.time()
+                audio_file[uuid]["GPT_auto_sumarization_time"] = gpt_stop-gpt_start
+
             # store transcribed output
             audio_file[uuid]["status"] = "transcribed"
             audio_file[uuid]["output_as_text"] = output
+
         except Exception as error_message:
             output = error_message
             print(output)
@@ -311,6 +359,75 @@ async def download_audio_to_queue_process(url: str) -> upload_audio:
     # return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
     return upload_audio(queue_id=uuid_name, status=audio_file[uuid_name]["status"])
 
+
+@app.post("/download_transcribe_sumarize_wrapper/")
+async def download_transcribe_sumarize_wrapper(item: summarize_gpt) -> upload_audio:
+    """
+    Endpoint that accepts an audio file URL and push it to internal queue to be processed
+
+    will return queue id that can be used on `/transcribtion_status/` endpoint to retrieve transcription
+
+    Arg:
+        url: Audio file url must have this file extension `.mp3`, `.ogg`, `.wav`.
+
+    example output:
+    `    {
+        "queue_id": "68f541ba-db94-49f7-837d-502fba269a1a",
+        "status": "stored"
+        }
+    `
+    """
+
+    # tell client if queue is full
+    if internal_queue.full():
+        raise HTTPException(
+            status_code=503,
+            detail=f"worker queue is full! there's {config['maximum_queue']} audio in the queue",
+        )
+
+    # Specify the folder where the file will be saved
+    upload_folder = config.audio_folder
+
+    # Create the folder if it doesn't exist
+    os.makedirs(upload_folder, exist_ok=True)
+
+    # Check if the uploaded file is an audio file
+    valid_extensions = [".mp3", ".wav", ".ogg"]
+    file_extension = os.path.splitext(item.audio_file_url)[1].lower()
+
+    if file_extension not in valid_extensions:
+        raise HTTPException(status_code=400, detail="File must be an audio file")
+
+    uuid_name = str(uuid.uuid4())
+
+    # Save the file to the specified folder
+    file_path = os.path.join(upload_folder, f"{uuid_name}{file_extension}")
+
+    command = f"wget -O {file_path} {item.audio_file_url}"
+
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output, error = process.communicate()
+
+    # put process in queue
+    internal_queue.put(uuid_name)
+
+    # store necessary data to be processed
+    audio_file[uuid_name] = {}
+    audio_file[uuid_name]["queue_id"] = uuid_name
+    audio_file[uuid_name]["file"] = file_path
+    # status can be (stored or processing)
+    audio_file[uuid_name]["status"] = "stored"
+    # time is required for other function to periodicaly check if
+    # this task is being 
+    audio_file[uuid_name]["GPT_instruction"] = item.instruction
+    audio_file[uuid_name]["GPT_endpoint"] = item.gpt_worker_endpoint
+    audio_file[uuid_name]["GPT_ip"] = item.gpt_worker_ip
+    audio_file[uuid_name]["GPT_port"] = item.gpt_worker_port
+    audio_file[uuid_name]["token_limit"] = item.token_limit
+    audio_file[uuid_name]["timestamp"] = time.time()
+
+    # return {"queue_id": uuid_name, "status": audio_file[uuid_name]["status"]}
+    return upload_audio(queue_id=uuid_name, status=audio_file[uuid_name]["status"])
 
 @app.get("/transcription_status/{uuid_name}")
 async def transcription_status(uuid_name: str):
