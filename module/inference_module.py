@@ -392,6 +392,128 @@ def fast_whisper_inference_single_channel(
         0, # no audio preprocessing
     )
 
+
+def huggingface_whisper_inference_conversation(
+    model, audio_file: str, channel_uid: list, task: str = "transcribe", language: str = "en",
+) -> Tuple[List[str], float]:
+    """
+    Uses the OpenAI Whisper model to transcribe stereo audio for each channel.
+    TODO!: dockstring incomplete and wrong
+
+    Args:
+        model: An instance of the Whisper model loaded using `whisper.load_model`.
+        audio_file (str): The stereo audio file path.
+        channel_uid (list): [left/speaker1, right/speaker2].
+
+    Returns:
+        A tuple containing a list of transcribed strings (one for each audio channel) and the time taken for the conversion process.
+
+    Raises:
+        ValueError: If the input audio is not in stereo format.
+
+    Example:
+        >>> transcriptions, conversion_time = whisper_inference('model.pth', 'audio.wav')
+        >>> print(transcriptions)
+        ['Transcription for left channel', 'Transcription for right channel']
+        >>> print(conversion_time)
+        3.14159
+    """
+    start_audio_processing_time = time.time()
+    # Split the stereo audio into left and right channels
+    split_data = split_stereo_audio_ffmpeg(audio_file)
+    # Perform the transcription for each audio channel while measuring conversion time
+    stop_audio_processing_time = time.time()
+    audio_processing_time = stop_audio_processing_time - start_audio_processing_time
+
+    start_transcribtion_time = time.time()
+    # [left, right]
+    transcriptions = []
+    count = 0
+    for channel, data in split_data.items():
+        # fast transcribe
+        outputs = model(
+            data,
+            chunk_length_s=30,
+            batch_size=24,
+            generate_kwargs={"task": task, "language": language},
+            return_timestamps=True,
+        )
+        # reformat output
+        results = pd.DataFrame(outputs["chunks"])
+        results["start"] = results.timestamp.apply(lambda x: x[0])
+        results["end"] = results.timestamp.apply(lambda x: x[1])
+
+        # prepend receiver and caller
+        results["text"] = channel_uid[count] + results["text"]
+        results["channel"] = 0 if channel == "Reciever: " else 1
+        transcriptions.append(results)
+        count = count + 1
+    stop_transcribtion_time = time.time()
+    transcribtion_time = stop_transcribtion_time - start_transcribtion_time
+
+    # create a back and forth conversation order
+    combined_transcription = pd.concat(transcriptions)
+    combined_transcription = combined_transcription.sort_values(
+        by=["start", "channel"]
+    )
+    combined_transcription = combined_transcription.reset_index(drop=True)
+
+    return (
+        transcriptions,
+        combined_transcription,
+        transcribtion_time,
+        audio_processing_time,
+    )
+
+
+def huggingface_whisper_inference_single_channel(
+    model, audio_file: str, channel_uid: str, task: str = "transcribe", language: str = "en",
+) -> Tuple[List[str], float]:
+    """
+    Uses the OpenAI Whisper model to transcribe mono audio channel.
+
+    Args:
+        model: An instance of the Whisper model loaded using `whisper.load_model`.
+        audio_file (str): The stereo audio file path.
+        channel_uid (str): left/speaker1.
+
+    Returns:
+        A tuple containing a list of transcribed strings and the time taken for the conversion process.
+
+    """
+
+    start_transcribtion_time = time.time()
+
+    # fast transcribe
+    outputs = model(
+        audio_file,
+        chunk_length_s=30,
+        batch_size=24,
+        generate_kwargs={"task": task, "language": language},
+        return_timestamps=True,
+    )
+    # reformat output
+    results = pd.DataFrame(outputs["chunks"])
+    results["start"] = results.timestamp.apply(lambda x: x[0])
+    results["end"] = results.timestamp.apply(lambda x: x[1])
+
+
+    # prepend receiver and caller
+    results["text"] = channel_uid + results["text"]
+    results["channel"] = 0
+
+    stop_transcribtion_time = time.time()
+    transcribtion_time = stop_transcribtion_time - start_transcribtion_time
+
+    transcriptions = [results]
+
+    return (
+        transcriptions,
+        None, # no conversation
+        transcribtion_time,
+        0, # no audio preprocessing
+    )
+
 def create_srt(
     df: pd.DataFrame,
     start_col: str = "start_speech",
@@ -746,6 +868,145 @@ def fast_whisper_to_vtt(
             "left_channel_raw": caller_raw,
             "audio_transcribtion_time": result[2],
             "mode": "mono_call",
+        }
+
+        # append file path to make it easier to locate on down stream function
+        if save_output_as_file:
+            returned_output["list_file_path"] = [
+                os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"),
+            ]
+
+        return returned_output
+    
+    else:
+        raise NotImplementedError
+
+
+
+def huggingface_whisper_to_vtt(
+    model,
+    audio_file_path: str,
+    save_output_as_file: bool = True,
+    output_dir: str = "/tmp/whisper_temp",
+    channel_uid: list = ["left_channel", "right_channel"],
+    task: str = "transcribe", 
+    language: str = "en",
+) -> Dict[str, str]:
+    """
+    Converts an audio file to three VTT (WebVTT) files containing the speech of the caller, receiver, and conversation.
+
+    Args:
+        model (whisper.model): The Whisper model.
+        audio_file_path (str): The path to the audio file to be processed.
+        save_output_as_file (bool, optional): Whether to save the output as files or not. Defaults to True.
+        output_dir (str, optional): The directory to save the VTT files. Defaults to "/tmp/whisper_temp".
+        channel_uid (list): [left/speaker1, right/speaker2] defaulted to ["left_channel", "right_channel"].
+
+    Return:
+        dict:
+            'left_channel' (str): transcribed left channel,
+            'right_channel' (str): transcribed right channel,
+            'conversation' (str): transcribed both channel,
+            'audio_conversion_time' (int): ffmpeg conversion time,
+            'audio_transcribtion_time' (int): whisper inference time,
+            'list_file_path'(list, optional): saved file path.
+
+    Outputs:
+        bunch of vtt files on save_output_as_files with format
+            1. {audio_file_name}_{channel_uid[0]}.vtt
+            2. {audio_file_name}_{channel_uid[1]}.vtt
+            3. {audio_file_name}_conversation.vtt
+    """
+
+    # Create the folder if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
+    channel_count = count_number_of_channel(audio_file_path)
+
+    if channel_count == 2:
+        # Perform inference
+        result = huggingface_whisper_inference_conversation(model, audio_file_path, channel_uid, task, language)
+
+        # get audio name
+        # /path/to/audio/file.mp3
+        file_name = os.path.basename(audio_file_path)
+        file_name = os.path.splitext(file_name)[0]
+
+        # Convert inference results to VTT strings
+        caller = create_custom_vtt(result[0][0], "start", "end", "text")
+        receiver = create_custom_vtt(result[0][1], "start", "end", "text")
+        conversation = create_custom_vtt(result[1], "start", "end", "text")
+
+        caller_raw = [[round(x[0], 2), round(x[1], 2), x[2]] for x in result[0][0][["start", "end", "text"]].to_records(index=False)]
+        receiver_raw = [[round(x[0], 2), round(x[1], 2), x[2]] for x in result[0][1][["start", "end", "text"]].to_records(index=False)]
+
+
+        # Save VTT files
+        if save_output_as_file:
+            with open(
+                os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"), "w"
+            ) as f:
+                f.write(caller)
+            with open(
+                os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"), "w"
+            ) as f:
+                f.write(receiver)
+            with open(os.path.join(output_dir, f"{file_name}_conversation.vtt"), "w") as f:
+                f.write(conversation)
+
+        returned_output = {
+            "left_channel": caller.split("\n"),
+            "right_channel": receiver.split("\n"),
+            "left_channel_raw": caller_raw,
+            "left_channel_raw": receiver_raw,
+            "conversation": conversation.split("\n"),
+            "audio_conversion_time": result[3],
+            "audio_transcribtion_time": result[2],
+            "mode": "stereo_conversation",
+            "task": task,
+            "language": language,
+        }
+
+        # append file path to make it easier to locate on down stream function
+        if save_output_as_file:
+            returned_output["list_file_path"] = [
+                os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"),
+                os.path.join(output_dir, f"{file_name}_{channel_uid[1]}.vtt"),
+                os.path.join(output_dir, f"{file_name}_conversation.vtt"),
+            ]
+
+        return returned_output
+
+    elif channel_count == 1:
+
+        # Perform inference
+        result = huggingface_whisper_inference_single_channel(model, audio_file_path, channel_uid[0], task, language)
+
+
+        # get audio name
+        # /path/to/audio/file.mp3
+        file_name = os.path.basename(audio_file_path)
+        file_name = os.path.splitext(file_name)[0]
+
+        # Convert inference results to VTT strings
+        caller = create_custom_vtt(result[0][0], "start", "end", "text")
+        caller_raw = [[round(x[0], 2), round(x[1], 2), x[2]] for x in result[0][0][["start", "end", "text"]].to_records(index=False)]
+
+
+        # Save VTT files
+        if save_output_as_file:
+            with open(
+                os.path.join(output_dir, f"{file_name}_{channel_uid[0]}.vtt"), "w"
+            ) as f:
+                f.write(caller)
+
+        returned_output = {
+            "left_channel": caller.split("\n"),
+            "left_channel_raw": caller_raw,
+            "audio_transcribtion_time": result[2],
+            "mode": "mono_call",
+            "task": task,
+            "language": language,
         }
 
         # append file path to make it easier to locate on down stream function
