@@ -71,7 +71,7 @@ def load_model(model_name: str, device: str = "cuda", num_workers: int = 5):
         model_name, 
         device=device, 
         compute_type="float16", 
-        device_index=[0,1],
+        device_index=[1],
         cpu_threads=num_workers,
         num_workers=num_workers,
         )
@@ -241,7 +241,7 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> upload_
     will return queue id that can be used on `/transcribtion_status/` endpoint to retrieve transcription
 
     Arg:
-        file (UploadFile): Audio file to upload `.mp3`, `.ogg`, `.wav`.
+        file (UploadFile): Audio file to upload `.mp3`, `.ogg`, `.wav`, `.mp4`.
 
     example output:
     `    {
@@ -265,7 +265,7 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> upload_
     os.makedirs(upload_folder, exist_ok=True)
 
     # Check if the uploaded file is an audio file
-    valid_extensions = [".mp3", ".wav", ".ogg"]
+    valid_extensions = [".mp3", ".wav", ".ogg", ".mp4"]
     file_extension = os.path.splitext(file.filename)[1].lower()
 
     if file_extension not in valid_extensions:
@@ -277,6 +277,35 @@ async def upload_audio_to_queue_process(file: UploadFile = File(...)) -> upload_
     file_path = os.path.join(upload_folder, f"{uuid_name}{file_extension}")
     with open(file_path, "wb") as f:
         f.write(await file.read())
+
+    # if mp4 download it first then convert it
+    if file_extension == ".mp4":
+        # convert the mp4
+        convert_mp4_command = [
+            'ffmpeg', 
+            '-hide_banner',
+            '-loglevel',
+            'fatal',
+            '-i', 
+            # mp4 file path
+            os.path.join(upload_folder, f"{uuid_name}{file_extension}"), 
+            '-vn', 
+            '-acodec', 
+            'libmp3lame', 
+            '-q:a', 
+            '4', 
+            os.path.join(upload_folder, f"{uuid_name}.mp3"),
+        ]
+
+        process = subprocess.Popen(convert_mp4_command, shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        output, error = process.communicate()
+
+        if error:
+            raise HTTPException(status_code=500, detail=f"{error}")
+
+        # delete the mp4 files
+        os.remove(file_path)
+        file_path = os.path.join(upload_folder, f"{uuid_name}.mp3")
 
     # put process in queue
     internal_queue.put(uuid_name)
@@ -459,6 +488,33 @@ async def queue_length() -> queue_info:
 if __name__ == "__main__":
 
     config = parse_arguments()
+
+    # from dataclasses import dataclass
+    # @dataclass
+    # class Conf:
+    #     models: str 
+    #     output_vtt_dir: str 
+    #     audio_folder: str 
+    #     port: int
+    #     host: str
+    #     device: str
+    #     num_workers: int
+    #     maximum_queue: int
+    #     ephemeral_data_duration: int
+    #     ephemeral_check_period: int
+
+    # config = Conf(
+    #     models="medium",
+    #     output_vtt_dir="/home/zadmin/whisper_worker/whisper-inference/vtt_folder",
+    #     audio_folder="/home/zadmin/whisper_worker/whisper-inference/audio_folder",
+    #     port=8015,
+    #     host="0.0.0.0",
+    #     device="cuda",
+    #     num_workers=5,
+    #     maximum_queue=10,
+    #     ephemeral_data_duration=500,
+    #     ephemeral_check_period=5,
+    # )
 
     # pin the model into memory
 
